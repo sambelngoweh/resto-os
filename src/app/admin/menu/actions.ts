@@ -29,3 +29,26 @@ export async function deleteProduct(formData: FormData) {
   await db.delete(products).where(eq(products.id, productId));
   revalidatePath("/admin/menu");
 }
+
+export async function updateProduct(id: string, name: string, price: number, category: string, color: string) {
+  if (!name || isNaN(price) || !category || !color) return;
+  await db.update(products).set({ name, price, category, color }).where(eq(products.id, id));
+  revalidatePath("/admin/menu");
+}
+
+import { cookies } from "next/headers";
+
+export async function updateCategoryColor(category: string, color: string) {
+  await db.update(products).set({ color }).where(eq(products.category, category));
+  revalidatePath("/admin/menu");
+}
+
+export async function toggleCategoryCookie(category: string, isCollapsed: boolean) {
+  const cookieStore = await cookies();
+  cookieStore.set(`menu-collapse-${category}`, isCollapsed.toString(), { maxAge: 60 * 60 * 24 * 365 });
+}
+
+export async function setThemeCookie(theme: string) {
+  const cookieStore = await cookies();
+  cookieStore.set("theme", theme, { maxAge: 60 * 60 * 24 * 365 });
+}

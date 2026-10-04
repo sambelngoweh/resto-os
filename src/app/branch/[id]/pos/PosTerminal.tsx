@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, ShoppingCart, CreditCard, Plus, Minus, Trash2, X, Receipt, QrCode, Banknote, Clock, PauseCircle, ListChecks, PenSquare, History, CheckCircle } from "lucide-react";
-import { fetchOpenOrders, fetchNextOrderNumber, deleteOpenOrder, fetchCompletedOrders, generateQris, checkOrderStatus } from "./actions";
+import { ArrowLeft, ShoppingCart, CreditCard, Plus, Minus, Trash2, X, Receipt, QrCode, Banknote, Clock, PauseCircle, ListChecks, PenSquare, History, CheckCircle, Search, UserCheck } from "lucide-react";
+import { fetchOpenOrders, fetchNextOrderNumber, deleteOpenOrder, fetchCompletedOrders, generateQris, checkOrderStatus, updateOrderCustomerName } from "./actions";
 
 import { QRCodeCanvas } from "qrcode.react";
 import html2canvas from "html2canvas";
+import TerminalQrModal from "@/components/TerminalQrModal";
 
 export default function PosTerminal({ branchName, initialProducts }: { branchName: string, initialProducts: any[] }) {
   const [cart, setCart] = useState<{product: any, qty: number, note?: string}[]>([]);
@@ -24,6 +25,8 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [showOpenTabsModal, setShowOpenTabsModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successOrderData, setSuccessOrderData] = useState<any | null>(null);
   const [showQrisModal, setShowQrisModal] = useState(false);
   const [qrisString, setQrisString] = useState<string>("");
   const [qrisPollingOrderId, setQrisPollingOrderId] = useState<string | null>(null);
@@ -37,6 +40,7 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
   
   // Open Tabs & History State
   const [openTabs, setOpenTabs] = useState<any[]>([]);
+  const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
   const [completedOrders, setCompletedOrders] = useState<any[]>([]);
   
   // Receipt Image Capture State
@@ -44,8 +48,16 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
   const [captureAction, setCaptureAction] = useState<"WA" | "PRINT" | null>(null);
   const [isGeneratingReceipt, setIsGeneratingReceipt] = useState(false);
 
+  // Quick Attendance & Cashier Switch State
+  const [terminalModalAction, setTerminalModalAction] = useState<"ATTENDANCE" | "SWITCH_CASHIER" | null>(null);
+  const [activeCashierName, setActiveCashierName] = useState<string | null>(null);
+  const [attendanceToast, setAttendanceToast] = useState<{ message: string, time: string } | null>(null);
+
   const params = useParams();
   const branchId = params.id as string;
+
+  const total = cart.reduce((sum, item) => sum + (item.product.price * item.qty), 0);
+  const changeDue = (parseInt(amountTendered) || 0) - total;
 
   const categories = ["All", ...Array.from(new Set(initialProducts.map(p => p.category)))];
 
@@ -76,13 +88,31 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
           setTimeout(() => {
             setShowQrisModal(false);
             setQrisPollingOrderId(null);
-            clearCart();
-          }, 3000); // Wait 3 seconds to show the success mark before closing
+            
+            const finalOrderObj = {
+              orderNumber: activeOrderNumber || "QRIS",
+              createdAt: new Date().toISOString(),
+              total,
+              orderType,
+              status: "PAID",
+              paymentMethod: "QRIS",
+              amountTendered: total,
+              changeDue: 0,
+              items: cart.map(c => ({
+                productName: c.product.name,
+                quantity: c.qty,
+                price: c.product.price,
+                note: c.note
+              }))
+            };
+            setSuccessOrderData(finalOrderObj);
+            setShowSuccessModal(true);
+          }, 3000);
         }
       }, 3000);
     }
     return () => clearInterval(interval);
-  }, [showQrisModal, qrisPollingOrderId, qrisStatus]);
+  }, [showQrisModal, qrisPollingOrderId, qrisStatus, cart, total, orderType, activeOrderNumber]);
 
   const addToCart = (product: any) => {
     // Instantly apply the preloaded sequential draft number if starting a new cart
@@ -125,8 +155,6 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
     loadNextNumber(); // Refresh for the next customer
   };
 
-  const total = cart.reduce((sum, item) => sum + (item.product.price * item.qty), 0);
-  const changeDue = (parseInt(amountTendered) || 0) - total;
 
   const handleDeleteTab = async (orderId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent the row from clicking and resuming the tab
@@ -141,6 +169,11 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
     } else {
       alert("Failed to delete: " + result.error);
     }
+  };
+
+  const handleRenameTab = async (orderId: string, newName: string) => {
+    setOpenTabs(prev => prev.map(tab => tab.id === orderId ? { ...tab, customerName: newName } : tab));
+    await updateOrderCustomerName(orderId, newName);
   };
 
   const loadOpenTabs = async () => {
@@ -188,9 +221,16 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
           </div>
           <div style="margin-bottom: 24px;">${itemsHtml}</div>
           <div style="border-top: 2px dashed #cbd5e1; padding-top: 16px; font-size: 14px; font-weight: bold;">
-            <div style="display: flex; justify-content: space-between; font-size: 20px; font-weight: 900; margin-top: 8px;">
+            <div style="display: flex; justify-content: space-between; font-size: 20px; font-weight: 900; margin-top: 8px; margin-bottom: 12px;">
               <span>TOTAL</span><span>Rp ${order.total.toLocaleString('id-ID')}</span>
             </div>
+            <div style="display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-top: 4px;">
+              <span>Method</span><span>${order.paymentMethod || "CASH"}</span>
+            </div>
+            ${order.paymentMethod === "QRIS" ? `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-top: 4px;">
+              <span>Provider</span><span>${order.issuer || "MOCK / SANDBOX"}</span>
+            </div>` : ''}
           </div>
         `;
         
@@ -240,22 +280,29 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
             <style>
               @page {
                 margin: 0;
-                size: 58mm auto;
               }
               body { 
                 font-family: 'Courier New', Courier, monospace; 
-                width: 58mm; 
-                margin: 0; 
-                padding: 10px; 
+                margin: 0 auto; 
+                padding: 5mm; 
                 color: black; 
                 font-size: 12px;
+                width: 100%;
+                max-width: 58mm;
                 box-sizing: border-box;
               }
               .center { text-align: center; }
               .bold { font-weight: bold; }
               .dashed { border-top: 1px dashed black; margin: 8px 0; }
-              .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
-              .item-name { max-width: 60%; word-wrap: break-word; }
+              .row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+              .item-name { flex: 1; padding-right: 8px; word-break: break-word; text-align: left; }
+              .item-price { white-space: nowrap; text-align: right; }
+              
+              @media print {
+                body {
+                  padding: 2mm;
+                }
+              }
             </style>
           </head>
           <body>
@@ -272,7 +319,7 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
             ${order.items.map((item: any) => `
               <div class="row bold">
                 <span class="item-name">${item.quantity}x ${item.productName}</span>
-                <span>${(item.quantity * item.price).toLocaleString('id-ID')}</span>
+                <span class="item-price">${(item.quantity * item.price).toLocaleString('id-ID')}</span>
               </div>
               ${item.note ? `<div style="font-size: 0.8em; margin-left: 15px; margin-bottom: 3px;">* ${item.note}</div>` : ''}
             `).join('')}
@@ -281,6 +328,8 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
             
             <div class="row bold" style="font-size: 1.1em; margin-top: 5px;"><span>TOTAL</span><span>Rp ${order.total.toLocaleString('id-ID')}</span></div>
             <div class="row" style="margin-top: 3px;"><span>Status</span><span>${order.status}</span></div>
+            <div class="row"><span>Payment</span><span>${order.paymentMethod || "CASH"}</span></div>
+            ${order.paymentMethod === "QRIS" ? `<div class="row"><span>Provider</span><span>${order.issuer || "MOCK / SANDBOX"}</span></div>` : ''}
             
             <div class="dashed" style="margin-top: 10px;"></div>
             <div class="center" style="margin-top: 10px; font-size: 0.9em;">TERIMA KASIH!</div>
@@ -360,11 +409,35 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
         return; // Don't clear cart yet, wait for payment
       } else {
         // Standard Cash or Hold Order
-        clearCart();
         setShowCheckoutModal(false);
         setShowHoldModal(false);
         setAmountTendered("");
-        alert(status === "OPEN" ? `✅ Order Held (Queue: ${result.orderNumber})` : `✅ Transaction Complete!\nOrder Number: ${result.orderNumber}`); 
+        
+        if (status === "PAID") {
+          // Construct the order object for the receipt before clearing the cart
+          const finalOrderObj = {
+            orderNumber: result.orderNumber,
+            createdAt: new Date().toISOString(),
+            total,
+            orderType,
+            status: "PAID",
+            paymentMethod,
+            amountTendered: paymentMethod === "CASH" ? (parseInt(amountTendered) || total) : total,
+            changeDue: paymentMethod === "CASH" ? changeDue : 0,
+            items: cart.map(c => ({
+              productName: c.product.name,
+              quantity: c.qty,
+              price: c.product.price,
+              note: c.note
+            }))
+          };
+          setSuccessOrderData(finalOrderObj);
+          setShowSuccessModal(true);
+        } else {
+          // It's a Held Order
+          clearCart();
+          alert(`✅ Order Held (Queue: ${result.orderNumber})`);
+        }
       }
     } else {
       alert("❌ Operation failed! " + (result.error || ""));
@@ -410,8 +483,21 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
                     <span className="text-xl font-black text-slate-900 dark:text-white">Rp {total.toLocaleString('id-ID')}</span>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2">Cash Tendered (Rp)</label>
-                    <input type="number" value={amountTendered} onChange={e => setAmountTendered(e.target.value)} placeholder={total.toString()} className="w-full bg-white dark:bg-slate-900 border border-slate-300 rounded-xl px-4 py-3 font-black text-xl text-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2">Cash Tendered</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-xl text-slate-400 dark:text-slate-500">Rp</span>
+                      <input 
+                        type="text" 
+                        inputMode="numeric"
+                        value={amountTendered ? parseInt(amountTendered).toLocaleString('id-ID') : ""} 
+                        onChange={e => {
+                          const rawValue = e.target.value.replace(/\D/g, '');
+                          setAmountTendered(rawValue);
+                        }} 
+                        placeholder={total.toLocaleString('id-ID')} 
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl pl-12 pr-4 py-3 font-black text-xl text-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all placeholder:opacity-50" 
+                      />
+                    </div>
                   </div>
                   <div className="flex justify-between items-center pt-2">
                     <span className="text-slate-500 dark:text-slate-400 font-bold">Change Due:</span>
@@ -427,7 +513,7 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
               <button 
                 onClick={() => submitOrder("PAID")}
                 disabled={isProcessing || (paymentMethod === "CASH" && changeDue < 0)}
-                className="w-full bg-emerald-600 disabled:bg-slate-300 disabled:text-slate-500 dark:text-slate-400 text-white py-5 rounded-xl font-black text-xl flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all shadow-lg active:scale-95"
+                className="w-full bg-emerald-600 disabled:bg-slate-300 dark:disabled:bg-slate-800 disabled:shadow-none disabled:text-slate-400 dark:disabled:text-slate-500 text-white py-5 rounded-xl font-black text-xl flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 active:scale-[0.98]"
               >
                 <Receipt className="w-6 h-6" />
                 {isProcessing ? "PROCESSING..." : `CONFIRM ${paymentMethod} PAYMENT`}
@@ -479,7 +565,7 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
       {/* Open Tabs Modal */}
       {showOpenTabsModal && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-100 rounded-3xl shadow-2xl w-full max-w-4xl h-[80vh] overflow-hidden flex flex-col">
+          <div className="bg-slate-100 dark:bg-slate-950 rounded-3xl shadow-2xl w-full max-w-4xl h-[80vh] overflow-hidden flex flex-col">
             <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-slate-900">
               <h2 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2"><ListChecks className="text-indigo-600" /> Active Open Tabs</h2>
               <button onClick={() => setShowOpenTabsModal(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500 dark:text-slate-400">
@@ -495,28 +581,65 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
                 </div>
               ) : (
                 openTabs.map(tab => (
-                  <button key={tab.id} onClick={() => resumeTab(tab)} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all flex items-center justify-between group">
-                    <div className="flex items-center gap-6">
-                      <span className="bg-indigo-100 text-indigo-700 font-black text-sm px-3 py-1.5 rounded-lg w-20 text-center">{tab.orderNumber}</span>
-                      <div className="text-left">
-                        <h3 className="font-extrabold text-slate-900 dark:text-white text-lg">{tab.customerName || "Guest"}</h3>
-                        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{tab.items.length} items • <span className="uppercase text-xs font-bold text-slate-400 dark:text-slate-500">{tab.orderType.replace("_", " ")}</span></p>
+                  <div key={tab.id} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col transition-all shrink-0">
+                    <div 
+                      onClick={() => setExpandedTabId(expandedTabId === tab.id ? null : tab.id)}
+                      className="p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 flex items-center justify-between group"
+                    >
+                      <div className="flex items-center gap-6">
+                        <span className="bg-indigo-100 text-indigo-700 font-black text-sm px-3 py-1.5 rounded-lg w-20 text-center">{tab.orderNumber}</span>
+                        <div className="text-left flex flex-col justify-center">
+                          <input 
+                            type="text"
+                            defaultValue={tab.customerName || ""}
+                            placeholder="Guest"
+                            onClick={(e) => e.stopPropagation()}
+                            onBlur={(e) => {
+                              const newName = e.target.value.trim();
+                              if (newName !== (tab.customerName || "")) {
+                                handleRenameTab(tab.id, newName);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') e.currentTarget.blur();
+                            }}
+                            className="font-extrabold text-slate-900 dark:text-white text-lg bg-transparent border-b-2 border-transparent hover:border-slate-300 focus:border-indigo-500 focus:outline-none focus:ring-0 px-1 -ml-1 w-48 transition-colors placeholder:text-slate-900 dark:placeholder:text-white placeholder:opacity-50 dark:placeholder:opacity-50"
+                          />
+                          <p className="text-sm font-medium text-slate-500 dark:text-slate-400 px-1 -ml-1">{tab.items.length} items • <span className="uppercase text-xs font-bold text-slate-400 dark:text-slate-500">{tab.orderType.replace("_", " ")}</span></p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="font-black text-emerald-600 text-xl">Rp {tab.total.toLocaleString('id-ID')}</span>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); resumeTab(tab); }}
+                          className="bg-slate-100 dark:bg-slate-950 text-slate-600 font-bold px-4 py-2 rounded-xl hover:bg-indigo-600 hover:text-white transition-colors"
+                        >
+                          Resume →
+                        </button>
+                        <button 
+                          onClick={(e) => handleDeleteTab(tab.id, e)}
+                          className="p-3 text-slate-400 dark:text-slate-500 hover:bg-red-50 hover:text-red-600 rounded-xl transition-all"
+                          title="Delete Tab"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <span className="font-black text-emerald-600 text-xl">Rp {tab.total.toLocaleString('id-ID')}</span>
-                      <div className="bg-slate-50 dark:bg-slate-950 text-slate-600 font-bold px-4 py-2 rounded-xl group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                        Resume →
+                    
+                    {expandedTabId === tab.id && (
+                      <div className="bg-slate-50 dark:bg-slate-950 p-4 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2 fade-in duration-200">
+                        <h4 className="font-bold text-slate-500 dark:text-slate-400 text-xs uppercase tracking-widest mb-3">Order Items</h4>
+                        <div className="space-y-2">
+                          {tab.items.map((item: any, idx: number) => (
+                            <div key={idx} className="flex justify-between items-center text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <span>{item.quantity}x {item.productName} {item.note && <span className="text-slate-400 italic">({item.note})</span>}</span>
+                              <span className="font-bold">Rp {(item.quantity * item.price).toLocaleString('id-ID')}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      <button 
-                        onClick={(e) => handleDeleteTab(tab.id, e)}
-                        className="p-3 text-slate-400 dark:text-slate-500 hover:bg-red-50 hover:text-red-600 rounded-xl transition-all"
-                        title="Delete Tab"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </button>
+                    )}
+                  </div>
                 ))
               )}
             </div>
@@ -565,7 +688,7 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
       {/* History Modal */}
       {showHistoryModal && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-100 rounded-3xl shadow-2xl w-full max-w-4xl h-[80vh] overflow-hidden flex flex-col">
+          <div className="bg-slate-100 dark:bg-slate-950 rounded-3xl shadow-2xl w-full max-w-4xl h-[80vh] overflow-hidden flex flex-col">
             <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-slate-900">
               <h2 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2"><History className="text-indigo-600" /> Completed Orders</h2>
               <button onClick={() => setShowHistoryModal(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500 dark:text-slate-400">
@@ -581,30 +704,122 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
                 </div>
               ) : (
                 completedOrders.map(tab => (
-                  <div key={tab.id} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between">
-                    <div className="flex items-center gap-6">
-                      <span className="bg-emerald-100 text-emerald-700 font-black text-sm px-3 py-1.5 rounded-lg w-20 text-center">{tab.orderNumber}</span>
-                      <div className="text-left">
-                        <h3 className="font-extrabold text-slate-900 dark:text-white text-lg">{tab.customerName || "Guest"}</h3>
-                        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{tab.items.length} items • <span className="uppercase text-xs font-bold text-slate-400 dark:text-slate-500">{tab.orderType.replace("_", " ")}</span> • {new Date(tab.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                  <div key={tab.id} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col transition-all shrink-0">
+                    <div 
+                      onClick={() => setExpandedTabId(expandedTabId === tab.id ? null : tab.id)}
+                      className="p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 flex items-center justify-between group"
+                    >
+                      <div className="flex items-center gap-6">
+                        <span className="bg-emerald-100 text-emerald-700 font-black text-sm px-3 py-1.5 rounded-lg w-20 text-center">{tab.orderNumber}</span>
+                        <div className="text-left flex flex-col justify-center">
+                          <h3 className="font-extrabold text-slate-900 dark:text-white text-lg">{tab.customerName || "Guest"}</h3>
+                          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{tab.items.length} items • <span className="uppercase text-xs font-bold text-slate-400 dark:text-slate-500">{tab.orderType.replace("_", " ")}</span> • {new Date(tab.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-black text-emerald-600 text-xl mr-4">Rp {tab.total.toLocaleString('id-ID')}</span>
+                        
+                        <button onClick={(e) => { e.stopPropagation(); triggerReceiptCapture(tab, "PRINT"); }} className="bg-slate-100 dark:bg-slate-950 text-slate-700 dark:text-slate-300 font-bold px-4 py-2 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors flex items-center gap-2">
+                          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                          Print
+                        </button>
+                        
+                        <button onClick={(e) => { e.stopPropagation(); triggerReceiptCapture(tab, "WA"); }} className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-bold px-4 py-2 rounded-xl hover:bg-emerald-600 hover:text-white dark:hover:bg-emerald-600 transition-colors flex items-center gap-2">
+                          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" className="css-i6dzq1"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                          WA
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-black text-emerald-600 text-xl mr-4">Rp {tab.total.toLocaleString('id-ID')}</span>
-                      
-                      <button onClick={() => triggerReceiptCapture(tab, "PRINT")} className="bg-slate-100 text-slate-700 dark:text-slate-300 font-bold px-4 py-2 rounded-xl hover:bg-slate-200 transition-colors flex items-center gap-2">
-                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-                        Print
-                      </button>
-                      
-                      <button onClick={() => triggerReceiptCapture(tab, "WA")} className="bg-emerald-50 text-emerald-600 font-bold px-4 py-2 rounded-xl hover:bg-emerald-600 hover:text-white transition-colors flex items-center gap-2">
-                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" className="css-i6dzq1"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
-                        WA
-                      </button>
-                    </div>
+                    
+                    {expandedTabId === tab.id && (
+                      <div className="bg-slate-50 dark:bg-slate-950 p-4 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2 fade-in duration-200">
+                        <h4 className="font-bold text-slate-500 dark:text-slate-400 text-xs uppercase tracking-widest mb-3">Order Items</h4>
+                        <div className="space-y-2">
+                          {tab.items.map((item: any, idx: number) => (
+                            <div key={idx} className="flex justify-between items-center text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <span>{item.quantity}x {item.productName} {item.note && <span className="text-slate-400 italic">({item.note})</span>}</span>
+                              <span className="font-bold">Rp {(item.quantity * item.price).toLocaleString('id-ID')}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success / Receipt Modal */}
+      {showSuccessModal && successOrderData && (
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="bg-emerald-50 dark:bg-emerald-900/30 p-8 flex flex-col items-center justify-center text-center border-b border-emerald-100 dark:border-emerald-800/50">
+              <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-800/50 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mb-4 shadow-inner">
+                <CheckCircle className="w-10 h-10" />
+              </div>
+              <h2 className="text-2xl font-black text-emerald-700 dark:text-emerald-400 mb-1">Payment Successful!</h2>
+              <p className="font-bold text-slate-500 dark:text-slate-400">Order <span className="text-slate-700 dark:text-slate-300">{successOrderData.orderNumber}</span></p>
+            </div>
+            
+            <div className="p-8 space-y-6">
+              <div className="flex flex-col gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest text-xs">Total Paid</span>
+                  <span className="font-black text-xl text-slate-900 dark:text-white">Rp {successOrderData.total.toLocaleString('id-ID')}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest text-xs">Payment Method</span>
+                  <div className="flex flex-col items-end">
+                    <span className="font-bold text-sm text-slate-700 dark:text-slate-300">
+                      {successOrderData.paymentMethod === "CASH" ? "CASH" : "QRIS"}
+                    </span>
+                    {successOrderData.paymentMethod === "QRIS" && (
+                      <span className="text-[10px] font-black bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded mt-1 uppercase tracking-wider">
+                        {successOrderData.issuer || "MOCK / SANDBOX"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              {successOrderData.paymentMethod === "CASH" && (
+                <div className="bg-orange-50 dark:bg-orange-900/20 rounded-2xl p-6 border border-orange-100 dark:border-orange-800/30 flex flex-col items-center justify-center text-center shadow-sm">
+                  <span className="text-orange-600 dark:text-orange-400 font-bold uppercase tracking-widest text-xs mb-2">Change Due</span>
+                  <span className="font-black text-4xl text-orange-600 dark:text-orange-400">Rp {successOrderData.changeDue.toLocaleString('id-ID')}</span>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={() => triggerReceiptCapture(successOrderData, "PRINT")}
+                  disabled={isGeneratingReceipt}
+                  className="flex-1 border-2 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                >
+                  <Receipt className="w-5 h-5" /> Print
+                </button>
+                <button 
+                  onClick={() => triggerReceiptCapture(successOrderData, "WA")}
+                  disabled={isGeneratingReceipt}
+                  className="flex-1 bg-[#25D366] text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#1EBE5C] shadow-md transition-colors disabled:opacity-50"
+                >
+                  <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                  WhatsApp
+                </button>
+              </div>
+              
+              <button 
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  setSuccessOrderData(null);
+                  clearCart();
+                }}
+                className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-4 rounded-xl font-black text-lg hover:bg-slate-800 dark:hover:bg-slate-200 transition-colors shadow-lg mt-2"
+              >
+                NEW ORDER
+              </button>
             </div>
           </div>
         </div>
@@ -629,11 +844,57 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
           <button onClick={loadHistory} className="bg-slate-700 hover:bg-slate-600 px-4 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors text-white">
             <History className="w-4 h-4" /> HISTORY
           </button>
+          <button 
+            onClick={() => setTerminalModalAction("ATTENDANCE")} 
+            className="bg-emerald-600 hover:bg-emerald-500 px-3.5 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors text-white shadow-sm"
+            title="Kitchen Cooks & Runners Attendance"
+          >
+            <Clock className="w-4 h-4" /> ATTENDANCE
+          </button>
+          <button 
+            onClick={() => setTerminalModalAction("SWITCH_CASHIER")} 
+            className="bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors text-slate-300 hover:text-white"
+            title="Switch Active Cashier"
+          >
+            <UserCheck className="w-4 h-4 text-indigo-400" />
+            <span className="max-w-[120px] truncate">{activeCashierName || "SWITCH CASHIER"}</span>
+          </button>
         </div>
         <div suppressHydrationWarning className="text-sm font-medium text-slate-300">
           {new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
         </div>
       </header>
+
+      {/* Attendance Celebration Floating Toast */}
+      {attendanceToast && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-emerald-600 text-white font-extrabold text-sm px-6 py-3 rounded-2xl shadow-2xl z-50 flex items-center gap-3 animate-in slide-in-from-top-4 duration-300">
+          <CheckCircle className="w-5 h-5 text-white" />
+          <span>{attendanceToast.message} at {attendanceToast.time}</span>
+        </div>
+      )}
+
+      {/* Dynamic Terminal QR Modal */}
+      {terminalModalAction && (
+        <TerminalQrModal
+          isOpen={!!terminalModalAction}
+          onClose={() => setTerminalModalAction(null)}
+          action={terminalModalAction}
+          branchId={branchId}
+          onSuccess={(data) => {
+            if (terminalModalAction === "SWITCH_CASHIER") {
+              setActiveCashierName(data.userName);
+            } else if (terminalModalAction === "ATTENDANCE") {
+              setAttendanceToast({
+                message: `${data.userName} (${data.attendanceType === 'CLOCK_OUT' ? 'Clocked Out' : 'Clocked In'})`,
+                time: data.clockTime,
+              });
+              setTimeout(() => {
+                setAttendanceToast(null);
+              }, 4000);
+            }
+          }}
+        />
+      )}
 
       <div className="flex-1 flex overflow-hidden">
         
@@ -642,15 +903,18 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
           
           {/* Controls: Search & Tabs */}
           <div className="mb-6 space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-bold text-slate-800">Menu Items</h2>
-              <input 
-                type="text" 
-                placeholder="Search menu..." 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64 shadow-sm"
-              />
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight">Menu Items</h2>
+              <div className="relative w-full sm:w-72">
+                <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="Search menu..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm font-medium focus:outline-none focus:border-indigo-500 dark:focus:border-indigo-500 transition-colors shadow-sm dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                />
+              </div>
             </div>
             
             {/* Category Tabs */}
@@ -659,10 +923,10 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
                 <button
                   key={cat as string}
                   onClick={() => setSelectedCategory(cat as string)}
-                  className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors shadow-sm ${
+                  className={`px-5 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors shadow-sm ${
                     selectedCategory === cat 
-                      ? 'bg-slate-800 text-white border border-slate-900' 
-                      : 'bg-white dark:bg-slate-900 text-slate-600 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:bg-slate-950'
+                      ? 'bg-indigo-600 text-white border border-indigo-700 dark:border-indigo-500' 
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   {cat as string}
@@ -677,34 +941,53 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
              </div>
           ) : (
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">
-              {filteredProducts.map(p => (
-                <button 
-                  key={p.id} 
-                  onClick={() => addToCart(p)}
-                  className={`${p.color} border-2 p-6 rounded-[2rem] flex flex-col items-center text-center justify-center gap-3 hover:scale-105 transition-transform active:scale-95 shadow-sm h-40`}
-                >
-                  <span className="font-extrabold text-lg leading-tight">{p.name}</span>
-                  <span className="font-black opacity-80 text-sm">Rp {(p.price).toLocaleString('id-ID')}</span>
-                </button>
-              ))}
+              {filteredProducts.map(p => {
+                const isHex = p.color?.startsWith("#");
+                const style = isHex ? { backgroundColor: p.color, borderColor: p.color } : {};
+                const className = isHex 
+                  ? "border-2 p-6 rounded-[2rem] flex flex-col items-center text-center justify-center gap-3 hover:scale-105 transition-transform active:scale-95 shadow-sm h-40 text-slate-900 dark:text-slate-100 dark:bg-opacity-20"
+                  : `${p.color} border-2 p-6 rounded-[2rem] flex flex-col items-center text-center justify-center gap-3 hover:scale-105 transition-transform active:scale-95 shadow-sm h-40`;
+                  
+                return (
+                  <button 
+                    key={p.id} 
+                    onClick={() => addToCart(p)}
+                    className={className}
+                    style={style}
+                  >
+                    <span className="font-extrabold text-lg leading-tight">{p.name}</span>
+                    <span className="font-black opacity-80 text-sm">Rp {(p.price).toLocaleString('id-ID')}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </main>
 
         {/* Cart Panel (Right Side) */}
         <aside className="w-[400px] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col shadow-2xl shrink-0 z-10">
-          <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
-            <div className="flex items-center gap-3">
-              <ShoppingCart className="w-6 h-6 text-slate-700 dark:text-slate-300" />
-              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                {activeOrderNumber ? `Order ${activeOrderNumber}` : "Current Order"}
-              </h2>
+          <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col gap-3 bg-slate-50 dark:bg-slate-950">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <ShoppingCart className="w-6 h-6 text-slate-700 dark:text-slate-300" />
+                <h2 className="text-xl font-black text-slate-900 dark:text-white bg-slate-200 dark:bg-slate-800 px-3 py-1 rounded-lg tracking-wider">
+                  {activeOrderNumber ? `ORDER ${activeOrderNumber}` : "NEW ORDER"}
+                </h2>
+              </div>
+              {cart.length > 0 && (
+                <button onClick={clearCart} className="text-red-500 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors">
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              )}
             </div>
-            {cart.length > 0 && (
-              <button onClick={clearCart} className="text-red-500 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors">
-                <Trash2 className="w-5 h-5" />
-              </button>
-            )}
+            
+            <input 
+              type="text" 
+              placeholder="Customer Name (Optional)" 
+              value={activeCustomerName} 
+              onChange={e => setActiveCustomerName(e.target.value)} 
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm placeholder:font-medium" 
+            />
           </div>
           
           <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50 dark:bg-slate-950/50">
@@ -716,24 +999,25 @@ export default function PosTerminal({ branchName, initialProducts }: { branchNam
               </div>
             ) : (
               cart.map(item => (
-                <div key={item.product.id} className="flex justify-between items-center bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                  <div className="flex-1 pr-2">
+                <div key={item.product.id} className="flex justify-between items-center bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm gap-3">
+                  <div className="flex-1 min-w-0 flex flex-col justify-center">
                     <p className="font-bold text-slate-900 dark:text-white text-sm leading-tight">{item.product.name}</p>
-                    <p className="text-xs text-emerald-600 font-black mt-1">Rp {item.product.price.toLocaleString('id-ID')}</p>
-                    <div className="mt-2">
-                      <button onClick={() => updateNote(item.product.id)} className="text-xs font-bold flex items-center gap-1 transition-colors text-left break-words w-full" style={{ color: item.note ? '#4f46e5' : '#94a3b8' }}>
-                        <PenSquare className="w-3 h-3 shrink-0" /> 
-                        <span className="truncate">{item.note ? `Note: ${item.note}` : "Add Note"}</span>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <p className="text-xs text-emerald-600 font-black">Rp {item.product.price.toLocaleString('id-ID')}</p>
+                      <span className="text-slate-300 dark:text-slate-700 text-[10px] leading-none">•</span>
+                      <button onClick={() => updateNote(item.product.id)} className="text-[11px] font-bold flex items-center gap-1 transition-colors truncate" style={{ color: item.note ? '#4f46e5' : '#94a3b8' }}>
+                        <PenSquare className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{item.note ? `${item.note}` : "Add Note"}</span>
                       </button>
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2 py-1 shadow-sm shrink-0">
-                    <button onClick={() => updateQty(item.product.id, -1)} className="p-2 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm rounded text-slate-600 dark:text-slate-400 transition-all">
+                  <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-1 py-1 shadow-sm shrink-0">
+                    <button onClick={() => updateQty(item.product.id, -1)} className="p-1 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm rounded-lg text-slate-600 dark:text-slate-400 transition-all">
                       <Minus className="w-4 h-4" />
                     </button>
-                    <span className="font-bold w-4 text-center dark:text-white">{item.qty}</span>
-                    <button onClick={() => updateQty(item.product.id, 1)} className="p-2 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm rounded text-slate-600 dark:text-slate-400 transition-all">
+                    <span className="font-black w-5 text-center dark:text-white text-sm">{item.qty}</span>
+                    <button onClick={() => updateQty(item.product.id, 1)} className="p-1 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm rounded-lg text-slate-600 dark:text-slate-400 transition-all">
                       <Plus className="w-4 h-4" />
                     </button>
                   </div>

@@ -54,9 +54,13 @@ export default async function TeamPage({
             "use server";
             const { addStaffMember } = await import("./actions");
             await addStaffMember(formData);
-          }} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl flex gap-3 shadow-sm items-center">
+          }} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl flex flex-wrap sm:flex-nowrap gap-3 shadow-sm items-center">
             <input type="hidden" name="branchId" value={id} />
             <input type="text" name="name" required placeholder="Staff Name" className="px-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm outline-none focus:border-indigo-500 font-bold" />
+            <select name="staffType" defaultValue="REGULAR" className="px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs outline-none focus:border-indigo-500 font-bold text-slate-700 dark:text-slate-300">
+              <option value="REGULAR">Regular (Full Pool)</option>
+              <option value="SHIFT_TIMER">⏱️ Shift Timer (10-13 only)</option>
+            </select>
             <button type="submit" className="bg-indigo-600 text-white font-bold px-4 py-2 rounded-xl text-sm hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-600/20 whitespace-nowrap">
               + Add Worker
             </button>
@@ -65,6 +69,7 @@ export default async function TeamPage({
 
         <div className="flex flex-col gap-4">
           {branchStaff.map(worker => {
+            const isTimer = worker.staffType === "SHIFT_TIMER" || (worker.name && /shift\s*timer|timer/i.test(worker.name));
             const workerShifts = branchShifts.filter(s => s.userId === worker.id);
             const completedShifts = workerShifts.filter(s => s.status === "COMPLETED");
             const totalPay = completedShifts.reduce((sum, s) => sum + s.expectedPay, 0);
@@ -83,6 +88,35 @@ export default async function TeamPage({
                   )}
                   <div className="flex-1">
                     <h3 className="font-extrabold text-slate-900 dark:text-white text-lg leading-tight">{worker.name}</h3>
+
+                    <div className="flex items-center gap-2 mt-1 mb-1 flex-wrap">
+                      {isTimer ? (
+                        <span className="text-[10px] font-black uppercase tracking-wider bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded border border-purple-300 dark:border-purple-800 flex items-center gap-1">
+                          ⏱️ Shift Timer
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded">
+                          👤 Regular
+                        </span>
+                      )}
+
+                      <form action={async (formData) => {
+                        "use server";
+                        const { toggleStaffType } = await import("./actions");
+                        await toggleStaffType(formData);
+                      }}>
+                        <input type="hidden" name="userId" value={worker.id} />
+                        <input type="hidden" name="branchId" value={id} />
+                        <input type="hidden" name="nextType" value={isTimer ? "REGULAR" : "SHIFT_TIMER"} />
+                        <button
+                          type="submit"
+                          className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
+                          title="Switch worker role between Regular and Shift Timer"
+                        >
+                          {isTimer ? "⇄ Set Regular" : "⇄ Set Shift Timer"}
+                        </button>
+                      </form>
+                    </div>
                     
                     {worker.email && !worker.email.includes("@unbound.local") ? (
                       <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 truncate">{worker.email}</div>

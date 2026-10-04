@@ -213,3 +213,12 @@ export async function deleteOpenOrder(orderId: string) {
     return { success: false, error: "Failed to delete order" };
   }
 }
+
+export async function updateOrderCustomerName(orderId: string, customerName: string) {
+  try {
+    await db.update(orders).set({ customerName }).where(eq(orders.id, orderId));
+    return { success: true };
+  } catch (err) {
+    return { success: false };
+  }
+}

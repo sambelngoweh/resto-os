@@ -6,24 +6,31 @@ import { redirect } from "next/navigation";
 import { addGlobalProduct, deleteProduct } from "./actions";
 import { ArrowLeft, BookOpen, Trash2, Plus, Coffee } from "lucide-react";
 import { DeleteButton } from "./DeleteButton";
+import { ProductCard } from "./ProductCard";
+import { CategoryGroup } from "./CategoryGroup";
+
+import { cookies } from "next/headers";
 
 export default async function HQMenuManager() {
   const session = await auth();
   // @ts-ignore
   if (session?.user?.role !== "SUPER_ADMIN") redirect("/");
 
+  const cookieStore = await cookies();
+
   // Fetch only Global items (where restaurantId is null)
   const globalMenu = await db.select().from(products).where(isNull(products.restaurantId));
 
   const categories = ["Food", "Drink", "Snack", "Dessert"];
   const colors = [
-    { label: "Orange", value: "bg-orange-100 text-orange-700 border-orange-200" },
-    { label: "Red", value: "bg-red-100 text-red-700 border-red-200" },
-    { label: "Amber", value: "bg-amber-100 text-amber-700 border-amber-200" },
-    { label: "Blue", value: "bg-blue-100 text-blue-700 border-blue-200" },
-    { label: "Yellow", value: "bg-yellow-100 text-yellow-700 border-yellow-200" },
-    { label: "Emerald", value: "bg-emerald-100 text-emerald-700 border-emerald-200" },
-    { label: "Stone", value: "bg-stone-100 text-stone-700 border-stone-200" },
+    { label: "Orange", value: "bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800/50" },
+    { label: "Red", value: "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800/50" },
+    { label: "Blue", value: "bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/50" },
+    { label: "Green", value: "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50" },
+    { label: "Purple", value: "bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800/50" },
+    { label: "Yellow", value: "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/50" },
+    { label: "Pink", value: "bg-pink-100 dark:bg-pink-950/40 text-pink-700 dark:text-pink-400 border-pink-200 dark:border-pink-800/50" },
+    { label: "Gray", value: "bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700" }
   ];
 
   return (
@@ -80,9 +87,9 @@ export default async function HQMenuManager() {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Color Theme</label>
-                  <select name="color" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2 py-3 font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none text-sm">
-                    {colors.map(c => <option key={c.label} value={c.value}>{c.label}</option>)}
-                  </select>
+                  <div className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2 py-2 flex items-center justify-center">
+                    <input type="color" name="color" defaultValue="#6366f1" className="w-full h-8 p-0 border-0 rounded cursor-pointer bg-transparent" title="Pick a color" />
+                  </div>
                 </div>
               </div>
               
@@ -106,23 +113,20 @@ export default async function HQMenuManager() {
                   <BookOpen className="w-8 h-8 text-slate-300" />
                 </div>
                 <h3 className="text-slate-900 dark:text-white font-bold text-lg mb-1">No Menu Items Found</h3>
-                <p className="text-slate-500 dark:text-slate-400 dark:text-slate-500 text-sm max-w-sm">The Global Menu is currently empty. Use the form on the left to start pushing items to your branches.</p>
+                <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm">The Global Menu is currently empty. Use the form on the left to start pushing items to your branches.</p>
               </div>
             ) : (
-              <div className="grid sm:grid-cols-2 gap-4">
-                {globalMenu.map(item => (
-                  <div key={item.id} className={`${item.color} border p-4 rounded-2xl flex items-center justify-between group relative overflow-hidden transition-all shadow-sm hover:shadow-md`}>
-                    <div className="pr-10 relative z-10">
-                      <div className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">{item.category}</div>
-                      <div className="font-extrabold leading-tight text-lg">{item.name}</div>
-                      <div className="font-black mt-1 opacity-80">Rp {item.price.toLocaleString()}</div>
-                    </div>
-                    
-                    <form action={deleteProduct} className="absolute right-4 top-1/2 -translate-y-1/2 z-20">
-                      <input type="hidden" name="productId" value={item.id} />
-                      <DeleteButton />
-                    </form>
-                  </div>
+              <div className="space-y-8">
+                {Array.from(new Set(globalMenu.map(i => i.category))).map(cat => (
+                  <CategoryGroup 
+                    key={cat} 
+                    category={cat} 
+                    initialCollapsed={cookieStore.get(`menu-collapse-${cat}`)?.value === "true"}
+                  >
+                    {globalMenu.filter(item => item.category === cat).map(item => (
+                      <ProductCard key={item.id} item={item} />
+                    ))}
+                  </CategoryGroup>
                 ))}
               </div>
             )}

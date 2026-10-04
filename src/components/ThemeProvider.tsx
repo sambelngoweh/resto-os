@@ -1,9 +1,26 @@
 "use client";
 
 import * as React from "react";
-import { ThemeProvider as NextThemesProvider } from "next-themes";
-import { type ThemeProviderProps } from "next-themes/dist/types";
+import { setThemeCookie } from "@/app/admin/menu/actions";
 
-export function ThemeProvider({ children, ...props }: ThemeProviderProps) {
-  return <NextThemesProvider {...props}>{children}</NextThemesProvider>;
+type ThemeContextType = { theme: string; setTheme: (theme: string) => void };
+const ThemeContext = React.createContext<ThemeContextType>({ theme: "dark", setTheme: () => {} });
+
+export function ThemeProvider({ children, initialTheme }: { children: React.ReactNode, initialTheme: string }) {
+  const [theme, setThemeState] = React.useState(initialTheme);
+
+  const setTheme = async (newTheme: string) => {
+    setThemeState(newTheme);
+    if (newTheme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+    // Save to Server Cookie for zero-FOUC perfect SSR
+    await setThemeCookie(newTheme);
+  };
+
+  return <ThemeContext.Provider value={{ theme, setTheme }}>{children}</ThemeContext.Provider>;
 }
+
+export const useTheme = () => React.useContext(ThemeContext);

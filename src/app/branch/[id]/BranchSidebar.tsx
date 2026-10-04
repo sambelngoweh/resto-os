@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useSearchParams, useParams, usePathname } from "next/navigation";
-import { Store, CalendarDays, Users, Clock, ChevronLeft, ChevronRight, Building2, ShieldAlert, ArrowLeft, Eye } from "lucide-react";
+import { Store, CalendarDays, Users, Clock, ChevronLeft, ChevronRight, Building2, ShieldAlert, ArrowLeft, Eye, TrendingUp, Package, FileText, BookOpen } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -27,6 +27,10 @@ export default function BranchSidebar({ realRole, userRestaurantId, branchName, 
     { name: "POS Terminal", href: `/branch/${id}/pos${q}`, icon: Store, show: showDeviceLockedFeatures },
     { name: "Shift Scheduler", href: `/branch/${id}/scheduler${q}`, icon: CalendarDays, show: effectiveRole !== "WORKER" },
     { name: "Team & Payroll", href: `/branch/${id}/team${q}`, icon: Users, show: effectiveRole !== "WORKER" },
+    { name: "Inventory & Supply", href: `/branch/${id}/inventory${q}`, icon: Package, show: effectiveRole !== "WORKER" },
+    { name: "Recipe Builder", href: `/branch/${id}/recipes${q}`, icon: BookOpen, show: effectiveRole !== "WORKER" },
+    { name: "Daily Closing", href: `/branch/${id}/closing${q}`, icon: FileText, show: effectiveRole !== "WORKER" },
+    { name: "Financial Projection", href: `/branch/${id}/projection${q}`, icon: TrendingUp, show: effectiveRole === "SUPER_ADMIN" },
   ];
 
   return (

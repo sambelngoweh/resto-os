@@ -34,9 +34,8 @@ export default async function PosPage({
     redirect("/");
   }
 
-  const { cookies } = await import("next/headers");
-  const cookieStore = await cookies();
-  const isAuthorizedDevice = cookieStore.get("resto_device_auth")?.value === "true";
+  const { validateDeviceAuth } = await import("@/lib/deviceAuth");
+  const { isAuthorized: isAuthorizedDevice } = await validateDeviceAuth();
 
   if (effectiveRole === "WORKER" && !isAuthorizedDevice) {
     redirect(`/branch/${id}`);
