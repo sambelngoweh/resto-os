@@ -121,3 +121,102 @@ src/
 
 * Dev Server: `npm run dev` (Runs on `http://localhost:3000`).
 * Database inspect: `local.db` (SQLite). Use Node scripts or `better-sqlite3` to query. In PowerShell, escape nested quotes or write temporary `.js` scripts.
+
+---
+
+## 6. Cloudflare D1 & Cloudflare Pages / Workers Migration Blueprint
+
+**Crucial Insight for the Next AI Agent:**  
+Resto-OS was deliberately engineered with SQLite and Drizzle ORM dialect (`dialect: 'sqlite'`). Cloudflare D1 is **native SQLite**, meaning all existing table definitions, types, relations, and SQL queries in [`src/db/schema.ts`](file:///C:/Users/V14%20AMD%203020e%20DOS/.gemini/antigravity/scratch/resto-os/src/db/schema.ts) are **100% compatible with Cloudflare D1 without altering schema syntax**.
+
+### Step 1: Framework Adapter & Cloudflare Runtime
+For Next.js 15 App Router, deploy using `@opennextjs/cloudflare` (the modern recommended Cloudflare deployment path):
+```bash
+npm install -D @opennextjs/cloudflare wrangler
+```
+Add `wrangler.jsonc` (or `wrangler.toml`):
+```jsonc
+{
+  "name": "resto-os",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "resto-os-db",
+      "database_id": "<YOUR-CLOUDFLARE-D1-DATABASE-ID>"
+    }
+  ]
+}
+```
+
+### Step 2: Drizzle ORM Cloudflare D1 Adapter
+Currently in [`src/db/index.ts`](file:///C:/Users/V14%20AMD%203020e%20DOS/.gemini/antigravity/scratch/resto-os/src/db/index.ts), `better-sqlite3` is used for local Node.js runtime.  
+To support both local Node dev and Cloudflare D1 production:
+```typescript
+import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
+import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+import * as schema from './schema';
+
+// Helper to acquire database connection
+export function getDb(d1Binding?: any) {
+  if (d1Binding) {
+    return drizzleD1(d1Binding, { schema });
+  }
+  
+  // Local fallback (Node.js runtime / local test scripts)
+  const Database = require('better-sqlite3');
+  const sqlite = new Database('local.db');
+  return drizzleSqlite(sqlite, { schema });
+}
+
+// In Cloudflare Worker / OpenNext, access via getRequestContext().env.DB or export:
+export const db = getDb();
+```
+
+### Step 3: Database Creation & D1 Migrations
+1. Create the D1 database on Cloudflare:
+   ```bash
+   npx wrangler d1 create resto-os-db
+   ```
+2. Generate migration SQL files using Drizzle Kit:
+   ```bash
+   npx drizzle-kit generate
+   ```
+3. Apply migration to local D1 preview:
+   ```bash
+   npx wrangler d1 execute resto-os-db --local --file=./drizzle/0000_*.sql
+   ```
+4. Apply migration to production Cloudflare D1:
+   ```bash
+   npx wrangler d1 execute resto-os-db --remote --file=./drizzle/0000_*.sql
+   ```
+
+### Step 4: Migrating Data from `local.db` to Remote D1
+To export existing local branches, products, and user accounts to Cloudflare D1:
+1. Export data from local SQLite:
+   ```bash
+   sqlite3 local.db .dump > dump.sql
+   ```
+2. Strip out SQLite internal tables (e.g. `sqlite_sequence`) and transaction headers if present.
+3. Import into remote D1:
+   ```bash
+   npx wrangler d1 execute resto-os-db --remote --file=./dump.sql
+   ```
+
+### Step 5: NextAuth.js (Auth.js) on Cloudflare Workers
+* Resto-OS uses `auth.ts` (NextAuth v5 beta).
+* Ensure `AUTH_SECRET`, `AUTH_GOOGLE_ID`, and `AUTH_GOOGLE_SECRET` are configured as Cloudflare Secrets:
+  ```bash
+  npx wrangler secret put AUTH_SECRET
+  npx wrangler secret put AUTH_GOOGLE_ID
+  npx wrangler secret put AUTH_GOOGLE_SECRET
+  npx wrangler secret put MIDTRANS_SERVER_KEY
+  ```
+* Web Crypto APIs (`crypto.randomUUID()`) are natively supported in Cloudflare Workers with `nodejs_compat`.
+
